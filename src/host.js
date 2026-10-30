@@ -726,8 +726,17 @@ export default async function tts({ text, outDir, log }) {
   json('/aurabot', async () => aurabotStatus())
   json('/aurabot/enable', async (req) => {
     const b = await readBody(req)
-    if (b.voiceId !== undefined || b.instruction !== undefined || b.cfgScale !== undefined) {
-      saveCfg({ aurabot: { ...cfg.aurabot, voiceId: b.voiceId ?? cfg.aurabot.voiceId, instruction: b.instruction ?? cfg.aurabot.instruction, cfgScale: b.cfgScale ?? cfg.aurabot.cfgScale } })
+    if (b.voiceId !== undefined || b.instruction !== undefined || b.cfgScale !== undefined || b.emotionAuto !== undefined) {
+      saveCfg({
+        aurabot: {
+          ...cfg.aurabot,
+          voiceId: b.voiceId ?? cfg.aurabot.voiceId,
+          instruction: b.instruction ?? cfg.aurabot.instruction,
+          cfgScale: b.cfgScale ?? cfg.aurabot.cfgScale,
+          // 面板那个「跟随心情自动调语气」的勾，之前被这条路由丢掉了
+          emotionAuto: b.emotionAuto !== undefined ? Boolean(b.emotionAuto) : Boolean(cfg.aurabot.emotionAuto),
+        },
+      })
     }
     return aurabotEnable(hostBaseOf(req))
   })
