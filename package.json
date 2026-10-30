@@ -42,10 +42,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/<你的用户名>/dsh-breeze-tts.git"
+    "url": "https://github.com/tytc010/breeze-tts.git"
   },
-  "homepage": "https://github.com/<你的用户名>/dsh-breeze-tts#readme",
+  "homepage": "https://github.com/tytc010/breeze-tts#readme",
   "bugs": {
-    "url": "https://github.com/<你的用户名>/dsh-breeze-tts/issues"
+    "url": "https://github.com/tytc010/breeze-tts/issues"
   }
 }
