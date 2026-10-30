@@ -40,7 +40,16 @@ const DEFAULTS = {
   cfgScale: 1,
   seed: 42,
   presets: [],
-  aurabot: { enabled: false, voiceId: '', instruction: '', cfgScale: 1.2 },
+  aurabot: {
+    enabled: false,
+    voiceId: '',
+    instruction: '',
+    cfgScale: 1.2,
+    emotionAuto: false,
+    emotionBands: { low: 55, high: 85 },
+    emotionInstructions: { low: '', base: '', high: '' },
+    moodPath: '',
+  },
 }
 
 const dshHome = () => process.env.DSH_HOME || join(homedir(), '.dsh')
@@ -289,33 +298,116 @@ export function apply(ctx) {
   const aurabotVoice = () => dataDir('aurabot-voice.json')
 
   const AURABOT_SCRIPT = `${MARKER}（由 Breeze TTS 面板生成，删掉这个文件即可恢复）
-// 让大肥鱼的语音条走本地 Breeze TTS 2。参数由面板写进 aurabot-voice.json，这里只负责调用。
+// 让大肥鱼的语音条走本地 Breeze TTS 2。
+// 2026-10-30 加固：先等 /health 就绪再合成；支持按心情自动换语气（落盘滞回）。
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 const CONF = ${JSON.stringify(dataDir('aurabot-voice.json')).replace(/\\/g, '\\\\')}
+const STATE = ${JSON.stringify(dataDir('emotion-state.json')).replace(/\\/g, '\\\\')}
+const DEFAULT_MOOD = ${JSON.stringify(join(dshHome(), 'plugins-data', 'aurabot', 'mood.json')).replace(/\\/g, '\\\\')}
 
-function load() {
-  try { return JSON.parse(readFileSync(CONF, 'utf8')) } catch (e) { return {} }
+const TOTAL_MS = 55000          // Aurabot 侧硬上限 60 秒，留 5 秒余量
+const READY_RESERVE_MS = 20000  // 至少给真正的合成留 20 秒
+const COOLDOWN_MS = 10 * 60 * 1000 // 换档冷却：10 分钟
+const DEADBAND = 5              // 离开边界 5 分才切回，防抖
+
+// 读 JSON：手动去 BOM（charCodeAt 判断，模板里不写 \uFEFF 字面量）
+function readJson(p) {
+  try {
+    let s = readFileSync(p, 'utf8')
+    if (s && s.charCodeAt(0) === 0xFEFF) s = s.slice(1)
+    return JSON.parse(s)
+  } catch (e) { return null }
+}
+const load = () => readJson(CONF) || {}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+function trimSlash(s) { let o = String(s); while (o.endsWith('/')) o = o.slice(0, -1); return o }
+
+// 带滞回的档位判断：low / base / high
+function pickBand(value, prev, bands) {
+  const low = Number((bands && bands.low) != null ? bands.low : 55)
+  const high = Number((bands && bands.high) != null ? bands.high : 85)
+  const cur = prev && prev.band ? prev.band : 'base'
+  const v = Number(value)
+  if (!isFinite(v)) return 'base'
+  if (cur === 'low') return v > low + DEADBAND ? (v > high ? 'high' : 'base') : 'low'
+  if (cur === 'high') return v < high - DEADBAND ? (v < low ? 'low' : 'base') : 'high'
+  if (v < low) return 'low'
+  if (v > high) return 'high'
+  return 'base'
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+// 选指令：任何异常都退回基线，绝不因为情绪逻辑把话说不出来
+function chooseInstruction(c, log) {
+  const base = c.instruction || ''
+  try {
+    if (!c.emotionAuto) return base
+    const mood = readJson(c.moodPath || DEFAULT_MOOD)
+    if (!mood || !isFinite(Number(mood.value))) return base
+    const prev = readJson(STATE)
+    let band = pickBand(mood.value, prev, c.emotionBands || {})
+    const switched = !prev || prev.band !== band
+    const canSwitch = !prev || !prev.band || (Date.now() - (prev.at || 0)) >= COOLDOWN_MS
+    if (switched && !canSwitch) band = prev.band || 'base'
+    if (!prev || prev.band !== band) {
+      try { writeFileSync(STATE, JSON.stringify({ band, at: Date.now(), value: mood.value })) } catch (e) {}
+      log?.info?.('心情 ' + mood.value + ' → 语气档 ' + band)
+    }
+    const m = c.emotionInstructions || {}
+    return m[band] || base
+  } catch (e) {
+    return base
+  }
+}
+
+// 冷启动期间 /health 是连不上的；一直等到 deadline 或就绪
+async function waitReady(endpoint, until, log) {
+  let tries = 0
+  while (Date.now() < until) {
+    tries++
+    try {
+      const r = await fetch(endpoint + '/health', { signal: AbortSignal.timeout(2500) })
+      if (r.ok) {
+        if (tries > 1) log?.info?.('Breeze 就绪了（等了 ' + tries + ' 次探测）')
+        return true
+      }
+    } catch (e) {}
+    await sleep(1200)
+  }
+  return false
+}
 
 export default async function tts({ text, outDir, log }) {
+  const started = Date.now()
+  const deadline = started + TOTAL_MS
   const c = load()
-  const endpoint = String(c.endpoint || 'http://127.0.0.1:8080').replace(/\\/+$/, '')
+  const endpoint = trimSlash(c.endpoint || 'http://127.0.0.1:8080')
   const dir = c.outDir || outDir
   mkdirSync(dir, { recursive: true })
-  const noRetry = new Set(['400', '404'])
+
+  const instruction = chooseInstruction(c, log)
+
+  const ready = await waitReady(endpoint, deadline - READY_RESERVE_MS, log)
+  if (!ready) {
+    const waited = Math.round((Date.now() - started) / 1000)
+    throw new Error('Breeze 还在冷启动，等了 ' + waited + ' 秒没就绪')
+  }
+
   let last = ''
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const remain = deadline - Date.now()
+    if (remain < 4000) break
     try {
       const fd = new FormData()
       fd.append('text', text)
       if (c.voiceId) fd.append('voice_id', c.voiceId)
-      if (c.instruction) fd.append('instruction', c.instruction)
+      if (instruction) fd.append('instruction', instruction)
       if (c.cfgScale) fd.append('cfg_scale', String(c.cfgScale))
-      const r = await fetch(endpoint + '/v1/audio/speech', { method: 'POST', body: fd, signal: AbortSignal.timeout(55000) })
+      const r = await fetch(endpoint + '/v1/audio/speech', {
+        method: 'POST', body: fd,
+        signal: AbortSignal.timeout(Math.min(remain - 1000, 45000)),
+      })
       if (!r.ok) {
         last = 'HTTP ' + r.status
         if (r.status === 409) { await sleep(700 * (attempt + 1)); continue }
@@ -336,12 +428,12 @@ export default async function tts({ text, outDir, log }) {
       h.write('data', 36, 'ascii'); h.writeUInt32LE(pcm.length, 40)
       const f = join(dir, 'qq-' + Date.now() + '.wav')
       writeFileSync(f, Buffer.concat([h, pcm]))
-      log?.info?.('Breeze 念好了：' + String(text).slice(0, 20))
+      log?.info?.('Breeze 念好了：' + String(text).slice(0, 20) + '（' + Math.round((Date.now() - started) / 1000) + ' 秒）')
       return f
     } catch (e) {
       last = String(e.message || e)
-      if (attempt === 3) break
-      await sleep(500 * (attempt + 1))
+      if (attempt === 2) break
+      await sleep(800 * (attempt + 1))
     }
   }
   throw new Error('Breeze TTS 失败：' + last)
@@ -396,6 +488,14 @@ export default async function tts({ text, outDir, log }) {
       voiceId: cfg.aurabot.voiceId || cfg.defaultVoice || '',
       instruction: cfg.aurabot.instruction || cfg.instruction || '',
       cfgScale: Number(cfg.aurabot.cfgScale || 1),
+      emotionAuto: Boolean(cfg.aurabot.emotionAuto),
+      emotionBands: cfg.aurabot.emotionBands || { low: 55, high: 85 },
+      emotionInstructions: {
+        low: cfg.aurabot.emotionInstructions?.low || '',
+        base: cfg.aurabot.instruction || cfg.instruction || '',
+        high: cfg.aurabot.emotionInstructions?.high || '',
+      },
+      moodPath: cfg.aurabot.moodPath || '',
     })
     const conf = readJson(aurabotCfg(), {}) || {}
     conf.local = { ...(conf.local || {}), tts: true }

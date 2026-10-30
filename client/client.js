@@ -333,7 +333,7 @@ audio{width:100%;height:34px}
     // ---------------- Aurabot ----------------
     function AurabotTab({ st, reload, toast, voices }) {
       const ab = st.aurabot || {}
-      const [f, setF] = useState({ voiceId: ab.voice?.voiceId || '', instruction: ab.voice?.instruction || '', cfgScale: ab.voice?.cfgScale ?? 1.2 })
+      const [f, setF] = useState({ voiceId: ab.voice?.voiceId || '', instruction: ab.voice?.instruction || '', cfgScale: ab.voice?.cfgScale ?? 1.2, emotionAuto: Boolean(ab.voice?.emotionAuto) })
       const enable = async () => { const r = await post('/aurabot/enable', f); toast(r.ok ? r.message : r.message, r.ok ? 'ok' : 'err'); reload() }
       const disable = async () => { const r = await post('/aurabot/disable'); toast(r.message, 'ok'); reload() }
       const test = async () => { const r = await post('/aurabot/test'); toast(r.ok ? `测试语音生成好了，用时 ${(r.ms / 1000).toFixed(1)} 秒` : r.message, r.ok ? 'ok' : 'err'); reload() }
@@ -359,6 +359,9 @@ audio{width:100%;height:34px}
               h('input', { type: 'range', min: 1, max: 4, step: 0.1, value: f.cfgScale, onChange: (e) => setF((x) => ({ ...x, cfgScale: Number(e.target.value) })) }))),
           h('div', { className: 'bz-field' }, h('label', null, '导演指令（选了音色时生效）'),
             h('input', { className: 'bz-in', value: f.instruction, onChange: (e) => setF((x) => ({ ...x, instruction: e.target.value })), placeholder: '活泼俏皮，语速略快' })),
+          h('label', { className: 'bz-check', style: { marginTop: 8 } },
+            h('input', { type: 'checkbox', checked: Boolean(f.emotionAuto), onChange: (e) => setF((x) => ({ ...x, emotionAuto: e.target.checked })) }),
+            '跟随心情自动调语气（<55 蔫一点 · 55~85 保持现在的撒娇 · >85 轻快；10 分钟冷却）'),
           h('div', { className: 'bz-muted', style: { marginTop: 6 } }, '改了之后点上面「保存并重新接入」生效。生成的语音会存到文件页那个文件夹。'))
       )
     }
