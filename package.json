@@ -1,0 +1,51 @@
+{
+  "name": "dsh-breeze-tts",
+  "version": "0.1.0",
+  "description": "Breeze TTS 2 面板：连接状态、音色管理（设计/克隆/导演/转换），生成语音自动存档，并可一键接入 Aurabot（大肥鱼 QQ 插件的语音合成）",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/host.js",
+  "exports": {
+    ".": "./src/host.js",
+    "./client": "./client/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "breeze-tts",
+    "tts",
+    "aurabot"
+  ],
+  "files": [
+    "src",
+    "client",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "slots"
+      ],
+      "external": [
+        "react"
+      ]
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/<你的用户名>/dsh-breeze-tts.git"
+  },
+  "homepage": "https://github.com/<你的用户名>/dsh-breeze-tts#readme",
+  "bugs": {
+    "url": "https://github.com/<你的用户名>/dsh-breeze-tts/issues"
+  }
+}

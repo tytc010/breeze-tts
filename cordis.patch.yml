@@ -1,0 +1,6 @@
+# dsh-breeze-tts —— DSH bundle patch
+#
+# 只把自己挂进插件图。宿主半侧见 src/host.js，网页半侧见 client/client.js。
+- insert:
+    - id: breeze-tts
+      name: dsh-breeze-tts
